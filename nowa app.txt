@@ -1,0 +1,192 @@
+Poniżej przedstawiam szczegółową specyfikację funkcjonalną obecnej wersji aplikacji do monitorowania sieci, która posłuży jako punkt wyjścia do przygotowania nowej wersji z nowoczesnym, kompaktowym interfejsem webowym.
+
+---
+
+## 1. Cel i zakres aplikacji
+
+Aplikacja służy do automatycznego monitorowania urządzeń w sieci lokalnej. Umożliwia:
+
+- **Wykrywanie nowych urządzeń** – poprzez okresowe skanowanie sieci (przy użyciu pakietów ARP, scapy i/lub nmap).  
+- **Monitorowanie dostępności urządzeń** – cykliczne pingowanie urządzeń zarejestrowanych w systemie.  
+- **Gromadzenie danych historycznych** – zapis statusów dostępności oraz szczegółowych informacji o urządzeniach w bazie danych SQLite.  
+- **Udostępnianie interfejsu API** – do pobierania bieżących danych o urządzeniach, historii ich dostępności oraz do modyfikacji niektórych parametrów (np. zmiana nazwy, przełączanie monitorowania, ponowny skan portów).  
+- **Prezentację statusów** – aplikacja udostępnia interfejs webowy (dashboard) pokazujący listę urządzeń, ich bieżący status, historię dostępności oraz dodatkowe informacje (hostname, porty, OS, MAC, vendor itp.).
+
+---
+
+## 2. Główne moduły i funkcjonalności
+
+### a. Moduł inicjalizacji i konfiguracji bazy danych
+
+- **Inicjalizacja bazy SQLite:**  
+  - Tworzenie tabeli `device_info`, która przechowuje podstawowe informacje o urządzeniach (IP, hostname, porty w postaci JSON, system operacyjny, nazwa użytkownika, status monitorowania, MAC, vendor, czas ostatniej aktualizacji).  
+  - Tworzenie tabeli `availability` przechowującej historię dostępności (pingi) każdego urządzenia (IP, timestamp, status – 1 dla dostępnego, 0 dla niedostępnego).  
+  - Utworzenie indeksu dla szybszego wyszukiwania historii.  
+
+### b. Moduł zbierania i aktualizacji informacji o urządzeniach
+
+- **Skanowanie sieci:**  
+  - **Technika skanowania:** Główne podejście wykorzystuje wysyłanie surowych pakietów ARP (za pomocą scapy) do określonego zakresu IP.  
+  - **Fallback:** W przypadku braku uprawnień lub błędów, aplikacja korzysta z nmap w trybie `-sn` (ping scan).  
+  - **Aktualizacja danych:** Porównanie wykrytych urządzeń z już istniejącymi w bazie. W przypadku nowego urządzenia – dodanie do systemu, a dla już zarejestrowanych urządzeń – aktualizacja informacji (np. MAC, vendor) jeśli nastąpiły zmiany.
+
+- **Skanowanie portów i detekcja OS:**  
+  - Dla nowo wykrytych lub istniejących urządzeń wykonywany jest pełny skan portów TCP przy użyciu nmap, który dodatkowo próbuje określić system operacyjny i producenta (vendor) urządzenia.  
+  - Wyniki skanowania aktualizowane są w bazie.
+
+- **Rozwiązywanie nazw hostów:**  
+  - Funkcja używa `socket.gethostbyaddr` oraz `socket.getfqdn` do uzyskania FQDN, co pozwala na wyjątkową identyfikację urządzeń w sieci.
+
+### c. Moduł monitorowania dostępności (Pingowanie)
+
+- **Cykliczne pingowanie urządzeń:**  
+  - Aplikacja co określony interwał (PING_INTERVAL_SECONDS) wywołuje funkcję, która dla każdego urządzenia o włączonym monitorowaniu wykonuje polecenie systemowe (odpowiednio dla systemu Windows lub Unix).
+  - Wynik pingowania (dostępny/niedostępny) jest zapisywany w tabeli `availability` wraz z odpowiednim znacznikiem czasowym.
+
+- **Operacje na wynikach:**  
+  - Przy zapisie wyniku, aplikacja sprawdza, czy urządzenie istnieje w bazie.
+  - Wykorzystywane są mechanizmy wielowątkowości (threading) w celu równoległego wykonywania pingowania oraz zapewnienia stabilności operacji zapisu przy użyciu blokady (db_lock) do synchronizacji dostępu do SQLite.
+
+### d. Moduł agregacji i prezentacji danych
+
+- **Agregacja danych urządzeń:**  
+  - Funkcja `get_latest_device_status_with_info()` łączy dane z tabeli `device_info` oraz najnowsze wpisy z `availability`.  
+  - Dodatkowo pobierane są dane historyczne, takie jak:
+    - Data pierwszego pojawienia się urządzenia (pierwszy wpis)
+    - Data ostatniej dostępności (ostatni sukces ping)
+    - Liczba okresów niedostępności w ciągu ostatnich 24 godzin.
+
+- **Formatowanie danych dla interfejsu:**  
+  - Dane są dodatkowo formatowane pod kątem prezentacji w interfejsie web (np. kolor statusu – zielony dla dostępnych, czerwony dla niedostępnych, warunkowe linki do stron http/https w zależności od dostępności portów).
+
+### e. Moduł API i interfejs webowy
+
+- **Strona główna (Dashboard):**  
+  - Wyświetla listę monitorowanych urządzeń, ich status, dane systemowe, historię dostępności, oraz umożliwia interakcje (np. ustawianie własnej nazwy urządzenia, przełączanie monitoringu, ponowne skanowanie portów).
+
+- **Endpointy REST API:**  
+  - **GET `/`**  
+    - Główna strona dashboardu (renderowane za pomocą szablonów Flask).
+  - **GET `/api/devices`**  
+    - Zwraca listę urządzeń z najnowszymi statusami i informacjami.
+  - **GET `/api/device/<ip>`**  
+    - Zwraca szczegółowe informacje dla danego urządzenia.
+  - **GET `/api/device/<ip>/availability`**  
+    - Zwraca historię dostępności dla danego urządzenia, z możliwością określenia zakresu czasowego (np. „8h”, „-1d”).
+  - **POST `/api/device/<ip>/set_name`**  
+    - Umożliwia ustawienie własnej nazwy urządzenia.
+  - **POST `/api/device/<ip>/toggle_monitoring`**  
+    - Przełącza status monitorowania danego urządzenia (włączony/wyłączony).
+  - **POST `/api/device/<ip>/rescan_ports`**  
+    - Inicjuje ponowne skanowanie portów, systemu operacyjnego oraz producenta urządzenia.
+  - **DELETE `/api/device/<ip>`**  
+    - Usuwa wszystkie dane danego urządzenia (zarówno z tabeli `device_info`, jak i `availability`).
+
+- **Backend i wielowątkowość:**  
+  - Oprócz obsługi zapytań webowych, aplikacja uruchamia w tle dwa podstawowe wątki:
+    - **Skaner sieci:** Regularnie wywołuje funkcję `scan_network()`, wykrywając zmiany w sieci.
+    - **Pinger:** Regularnie ping wśród monitorowanych urządzeń.
+
+---
+
+## 3. Wymagania niefunkcjonalne
+
+### a. Wydajność i skalowalność
+
+- **Wielowątkowość:**  
+  - Użycie wielowątkowości (threading) w celu równoległego wykonywania zadań (skanowania sieci, pingowania) zapewnia responsywność systemu.
+
+- **Synchronizacja dostępu do bazy:**  
+  - Blokada (db_lock) przy operacjach zapisu gwarantuje spójność danych w środowisku wielowątkowym.
+
+### b. Bezpieczeństwo
+
+- **Uprawnienia:**  
+  - Skorzystanie z nmap oraz wysyłanie pakietów ARP może wymagać uruchomienia aplikacji z odpowiednimi uprawnieniami (np. jako root/administrator w systemie Unix).
+- **Uwierzytelnienie i autoryzacja:** (dla nowej wersji)  
+  - W obecnej wersji brak zaimplementowanych mechanizmów uwierzytelnienia dla API. W nowej wersji warto rozważyć wprowadzenie zabezpieczeń dla endpointów (np. tokenów API, OAuth, mechanizm logowania).
+
+### c. Interfejs użytkownika
+
+- **Aktualny stan:**  
+  - Interfejs webowy (Flask + szablony HTML) prezentuje dashboard z listą urządzeń i danymi statycznymi oraz umożliwia interakcję z aplikacją przez API.
+- **Wymagania dla nowej wersji:**  
+  - **Komponowalny, responsywny design:** Nowoczesny, kompaktowy interfejs, zoptymalizowany pod urządzenia mobilne i desktop.
+  - **Dynamiczne wykresy i wizualizacje:** Prezentacja historii dostępności urządzeń (np. wykresy czasowe), czy interaktywne widgety.
+  - **Użycie frameworków front-end:** Opcjonalne wykorzystanie React, Vue lub Angular dla bardziej wyrafinowanej obsługi interfejsu, przy zachowaniu REST API jako back-endu.
+
+---
+
+## 4. Przepływ danych i scenariusze użycia
+
+### a. Inicjalizacja systemu
+
+1. Aplikacja startuje i wykonuje inicjalizację bazy danych (tworzy tabele, indeksy).
+2. Uruchamiane są wątki skanowania sieci oraz pingowania urządzeń.
+
+### b. Wykrywanie i rejestracja urządzenia
+
+1. Wątek skanera przeprowadza okresowe skanowanie sieci w określonym zakresie (NETWORK_SCAN_RANGE).
+2. Na podstawie odpowiedzi ARP (lub nmap jako fallback) wykrywane są urządzenia – nowo odkryte IP są rejestrowane z podstawowymi informacjami.
+3. Dla nowego urządzenia:
+   - Rejestrowane są dane początkowe (IP, MAC, vendor, hostname – uzyskany przez funkcję resolve_hostname).
+   - Jednocześnie jest wykonywany pełny skan portów oraz detekcja systemu operacyjnego, a wyniki są aktualizowane w bazie.
+
+### c. Monitorowanie dostępności
+
+1. Wątek pingera cyklicznie sprawdza status wybranych urządzeń.
+2. Wyniki (ping status) są zapisywane w tabeli `availability` wraz z timestampem.
+3. Agregacja wyników umożliwia późniejsze wyświetlenie statystyk, takich jak:
+   - Data pierwszego wykrycia urządzenia.
+   - Data ostatniej dostępności.
+   - Liczba nieudanych prób połączenia w ostatnich 24 godzinach.
+
+### d. Interakcja użytkownika przez interfejs webowy
+
+1. Użytkownik wchodzi na stronę główną (dashboard) i widzi listę urządzeń z aktualnymi statusami.  
+2. Użytkownik może:
+   - Kliknąć na konkretne urządzenie, by zobaczyć szczegóły i historię dostępności.  
+   - Zmienić nazwę urządzenia poprzez odpowiedni endpoint API.  
+   - Przełączyć monitorowanie (włączyć/wyłączyć) – przydatne, gdy nie chcemy wykonywać cyklicznych pingów dla danego urządzenia.  
+   - Wymusić ponowne skanowanie portów i OS, aby zaktualizować dane.
+
+3. Wszystkie te operacje są wykonywane asynchronicznie, dzięki czemu interfejs pozostaje responsywny.
+
+---
+
+## 5. Warianty i rozszerzenia nowej wersji
+
+Przygotowując nową wersję aplikacji, warto rozważyć następujące rozszerzenia:
+
+- **Zaawansowany interfejs użytkownika:**  
+  - Zastosowanie frameworka JavaScript (np. React lub Vue) do budowy dynamicznego dashboardu.
+  - Interaktywne wykresy dostępności urządzeń w czasie rzeczywistym.
+  - Możliwość filtrowania, sortowania i wyszukiwania urządzeń.
+
+- **Uwierzytelnienie i autoryzacja:**  
+  - Dodanie mechanizmów bezpieczeństwa, by dostęp do API i dashboardu był chroniony.
+
+- **Integracja z systemami powiadomień:**  
+  - Możliwość wysyłania alertów (np. e-mail, SMS, komunikatory) w przypadku wykrycia długotrwałej niedostępności urządzenia.
+
+- **Moduł raportowania i logowania:**  
+  - Szczegółowa historia zdarzeń oraz możliwość eksportu danych.
+
+- **Skalowalność i wydajność:**  
+  - Rozważenie migracji z SQLite na bardziej wydajny system bazodanowy, jeżeli sieć zawiera bardzo dużą liczbę urządzeń.
+
+---
+
+## 6. Podsumowanie
+
+### Kluczowe funkcjonalności aplikacji:
+- **Automatyczne skanowanie sieci** i rejestracja nowych urządzeń.  
+- **Cykliczne monitorowanie dostępności** poprzez pingowanie urządzeń i archiwizacja wyników.  
+- **Skanowanie portów TCP oraz detekcja OS/Vendor** z użyciem nmap.  
+- **Elastyczne API REST** do zarządzania urządzeniami i interakcji z interfejsem webowym.  
+- **Komponentowy interfejs webowy** (obejmuje stronę główną, widok szczegółowy) – nowa wersja powinna mieć nowoczesny, kompaktowy oraz responsywny design.
+
+### Kierunki rozwoju nowej wersji:
+- Modernizacja interfejsu użytkownika z naciskiem na responsywność i interaktywność.  
+- Dodanie zaawansowanych funkcji bezpieczeństwa oraz raportowania.  
+- Rozbudowa funkcji analitycznych i wizualizacyjnych, która pomoże lepiej zrozumieć historyczne dane dostępności urządzeń.
