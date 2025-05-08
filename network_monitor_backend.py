@@ -44,7 +44,7 @@ logger = logging.getLogger('network_monitor')
 
 # Konfiguracja aplikacji
 CONFIG = {
-    'DATABASE_PATH': 'network_monitor.db',
+    'DATABASE_PATH': 'network_monitor2.db',
     'NETWORK_SCAN_RANGE': '10.12.1.0/24',  # Zakres skanowania sieci
     'NETWORK_SCAN_INTERVAL_SECONDS': 300,    # 5 minut
     'PING_INTERVAL_SECONDS': 60,             # 1 minuta
