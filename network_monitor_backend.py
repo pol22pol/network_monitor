@@ -45,11 +45,11 @@ logger = logging.getLogger('network_monitor')
 # Konfiguracja aplikacji
 CONFIG = {
     'DATABASE_PATH': 'network_monitor.db',
-    'NETWORK_SCAN_RANGE': '192.168.1.0/24',  # Zakres skanowania sieci
+    'NETWORK_SCAN_RANGE': '10.12.1.0/24',  # Zakres skanowania sieci
     'NETWORK_SCAN_INTERVAL_SECONDS': 300,    # 5 minut
     'PING_INTERVAL_SECONDS': 60,             # 1 minuta
     'PORT_SCAN_TIMEOUT': 5,                  # Timeout skanowania portów
-    'API_PORT': 5000,                        # Port API Flask
+    'API_PORT': 5550,                        # Port API Flask
     'API_HOST': '0.0.0.0',                   # Nasłuchuj na wszystkich interfejsach
     'DEBUG': True                            # Tryb debug
 }
