@@ -105,11 +105,11 @@ function initEventListeners() {
         showAlert('info', 'Odświeżanie danych...');
     });
     
-    // Skanowanie sieci
-    document.getElementById('scan-network').addEventListener('click', () => {
-        showAlert('info', 'Rozpoczynam skanowanie sieci...');
-        // TODO: Implementacja endpointu skanowania sieci
-    });
+// Skanowanie sieci
+document.getElementById('scan-network').addEventListener('click', () => {
+    showAlert('info', 'Rozpoczynam skanowanie sieci...');
+    scanNetwork(); // Wywołanie funkcji skanowania
+});
     
     // Wyszukiwanie urządzeń
     document.getElementById('search-devices').addEventListener('input', (e) => {
@@ -144,6 +144,108 @@ function fetchDevices() {
             console.error('Error fetching devices:', error);
             showAlert('danger', 'Błąd podczas pobierania danych urządzeń.');
             document.getElementById('devices-container').classList.remove('loading');
+        });
+}
+
+function scanNetwork() {
+    fetch('/api/scan', { method: 'POST' })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showAlert('success', 'Skanowanie sieci zakończone sukcesem.');
+                fetchDevices(); // Odśwież listę urządzeń po zakończeniu skanowania
+            } else {
+                showAlert('danger', 'Wystąpił błąd podczas skanowania sieci.');
+            }
+        })
+        .catch(error => {
+            console.error('Error scanning network:', error);
+            showAlert('danger', 'Błąd podczas próby skanowania sieci.');
+        });
+}
+
+function fetchDeviceHistory(ip) {
+    fetch(`/api/devices/${ip}/history`)
+        .then(response => response.json())
+        .then(history => {
+            displayHistory(history);
+        })
+        .catch(error => {
+            console.error('Error fetching device history:', error);
+            showAlert('danger', 'Błąd podczas pobierania historii urządzenia.');
+        });
+}
+
+function displayHistory(history) {
+    const container = document.getElementById('history-container');
+    container.innerHTML = ''; // Wyczyszczenie kontenera
+
+    if (history.length === 0) {
+        container.innerHTML = `
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle me-2"></i>
+                Brak danych historycznych dla tego urządzenia.
+            </div>
+        `;
+        return;
+    }
+
+    // Renderowanie tabeli historii
+    const table = `
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Data</th>
+                    <th>Status</th>
+                    <th>Opis</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${history.map(entry => `
+                    <tr>
+                        <td>${new Date(entry.timestamp).toLocaleString()}</td>
+                        <td>${entry.status}</td>
+                        <td>${entry.description || 'Brak'}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+    container.innerHTML = table;
+}
+
+// Wywołanie `fetchDeviceHistory` po zmianie urządzenia w selektorze
+document.getElementById('history-device-select').addEventListener('change', (e) => {
+    const selectedIp = e.target.value;
+    if (selectedIp) {
+        fetchDeviceHistory(selectedIp);
+    }
+});
+function saveSettings() {
+    const settingsForm = document.getElementById('settings-form');
+    const formData = new FormData(settingsForm);
+
+    const settings = {};
+    formData.forEach((value, key) => {
+        settings[key] = value;
+    });
+
+    fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+    })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showAlert('success', 'Ustawienia zapisane pomyślnie.');
+            } else {
+                showAlert('danger', 'Nie udało się zapisać ustawień.');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving settings:', error);
+            showAlert('danger', 'Błąd podczas zapisywania ustawień.');
         });
 }
 
