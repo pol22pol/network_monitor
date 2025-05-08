@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  network_monitor:
+    build: .
+    ports:
+      - "5550:5550"
+    # Aby skanowanie sieci działało poprawnie, kontener potrzebuje odpowiednich uprawnień.
+    # Można użyć 'privileged: true' (mniej bezpieczne) lub 'cap_add' (bardziej szczegółowe).
+    # 'CAP_NET_RAW' i 'CAP_NET_ADMIN' są często potrzebne do surowych gniazd i operacji sieciowych.
+    # Wybierz jedną z poniższych opcji:
+    # privileged: true
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    # Mapowanie woluminu na bazę danych (opcjonalne, aby dane przetrwały restart kontenera)
+    volumes:
+      - network_monitor_data:/app/network_monitor.db
+
+volumes:
+  network_monitor_data:
