@@ -15,7 +15,7 @@ services:
       - NET_ADMIN
     # Mapowanie woluminu na bazę danych (opcjonalne, aby dane przetrwały restart kontenera)
     volumes:
-      - network_monitor_data:/app/network_monitor.db
+      - /mnt/mydisk/pi/network_monitor/:/app/network_monitor.db
 
 volumes:
   network_monitor_data:
